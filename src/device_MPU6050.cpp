@@ -43,7 +43,18 @@ MPU6050::MPU6050(volatile uint8_t *sda_pin_reg, volatile uint8_t *sda_ddr, volat
 bool MPU6050::wakeUp() {
     // Write 0 to PWR_MGMT_1 to wake up the device
     uint8_t data[2] = {PWR_MGMT_1, 0x00};
-    return writeMessage(DEVICE_ADDRESS, data, 2);
+    bool success = writeMessage(DEVICE_ADDRESS, data, 2);
+
+    isAwake = success;
+    return success;
+}
+
+bool MPU6050::sleep() {
+    // Write 1 to PWR_MGMT_1 to put the device to sleep
+    uint8_t data[2] = {PWR_MGMT_1, 0x40};
+    bool success = writeMessage(DEVICE_ADDRESS, data, 2);
+    if (success) { isAwake = false; }
+    return success;
 }
 
 bool MPU6050::setRegisterPointer(uint8_t reg) {

@@ -36,6 +36,11 @@ public:
     bool setAccelRange(int range);
     bool setGyroRange(int range);
 
+    bool wakeUp();
+    bool sleep();
+
+    bool isDeviceAwake() const { return isAwake; } 
+
 private:
     // config variables
     float accel_sensitivity = 0; 
@@ -43,6 +48,8 @@ private:
 
     int accel_range = 0;
     int gyro_range = 0;
+    
+    bool isAwake = false;
     
     
     // Reading 14 bytes starting from ACCEL_XOUT_H (0x3B) will get all sensor data:
@@ -97,7 +104,6 @@ private:
     static const auto CONFIG = 0x1A;
 
     bool setRegisterPointer(uint8_t reg);
-    bool wakeUp();
 };
 
 #endif // MPU6050_H
