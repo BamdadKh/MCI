@@ -4,19 +4,10 @@
 #include <stdint.h>
 #include <protocol_I2C.h>
 
-// namespace MPU6050_ns {
-//     typedef struct {
-//         int16_t accelerometer[3]; // X, Y, Z
-//         int16_t gyroscope[3];     // X, Y, Z
-//         int16_t temperature;
-//     } MPU6050_Data;
-// }
-
-
 class MPU6050 : protected I2C { 
     
 public:
-    typedef struct {
+    typedef struct { // accel in g, gyro in °/s, temp in °C
         float accel_x;
         float accel_y;
         float accel_z;
