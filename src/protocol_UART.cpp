@@ -39,29 +39,7 @@ UART::UART(volatile uint8_t *tx_pin_reg, volatile uint8_t *tx_ddr, volatile uint
     *RX_DDR &= ~(1 << RX_PIN);
     *RX_PORT |= (1 << RX_PIN);
 
-    // Precompute timing (approximate)
-    if (baudrate == 0) baudrate = 9600; // fallback
-    unsigned long bitus = 1000000UL / baudrate; // approximate whole bit duration
-    if (bitus == 0) bitus = 1;
-    bitDelayUs = (unsigned int)bitus;
-    halfBitUs = (unsigned int)(bitus / 2U);
-    if (halfBitUs == 0) halfBitUs = 1;
-
-    // Compute loop counts: cycles per bit = F_CPU / baudrate
-    // Subtract overhead for function call and loop iteration (~20-30 cycles)
-    unsigned long cyclesPerBit = (F_CPU / baudrate);
-    if (cyclesPerBit < 40) cyclesPerBit = 40; // sanity check
-    
-    // Account for overhead: function call + loop management ~24 cycles
-    if (cyclesPerBit > 24) {
-        cyclesPerBit -= 24;
-    }
-    
-    // Round to multiple of 4 (since _delay_loop_2 consumes 4 cycles per count)
-    cyclesPerBit -= (cyclesPerBit % 4UL);
-    bitLoopCount = (uint16_t)(cyclesPerBit / 4UL);
-    halfBitLoopCount = (uint16_t)(bitLoopCount / 2U);
-    if (halfBitLoopCount == 0) halfBitLoopCount = 1;
+    recomputeTiming();
 
     // Map RX_PIN_REG to PCINT group and mask
     if (RX_PIN_REG == &PINB) {
@@ -96,6 +74,45 @@ UART::UART(volatile uint8_t *tx_pin_reg, volatile uint8_t *tx_ddr, volatile uint
         else if (rxGroupIdx == 2) lastPIND = PIND;
         SREG = sreg;              // restore
     }
+}
+
+void UART::recomputeTiming() {
+    if (baudrate == 0) baudrate = 9600; // fallback
+    unsigned long bitus = 1000000UL / baudrate; // approximate whole bit duration
+    if (bitus == 0) bitus = 1;
+    bitDelayUs = (unsigned int)bitus;
+    halfBitUs = (unsigned int)(bitus / 2U);
+    if (halfBitUs == 0) halfBitUs = 1;
+
+    unsigned long cyclesPerBit = (F_CPU / baudrate);
+    if (cyclesPerBit < 40) cyclesPerBit = 40; // sanity check
+    if (cyclesPerBit > 24) {
+        cyclesPerBit -= 24; // overhead compensation
+    }
+    cyclesPerBit -= (cyclesPerBit % 4UL);
+    bitLoopCount = (uint16_t)(cyclesPerBit / 4UL);
+    halfBitLoopCount = (uint16_t)(bitLoopCount / 2U);
+    if (halfBitLoopCount == 0) halfBitLoopCount = 1;
+}
+
+bool UART::begin(unsigned long baud) {
+    if (baud) {
+        baudrate = baud;
+        recomputeTiming();
+    }
+    // Re-assert pin directions and idle levels
+    *TX_DDR |= (1 << TX_PIN);
+    *TX_PORT |= (1 << TX_PIN);
+    *RX_DDR &= ~(1 << RX_PIN);
+    *RX_PORT |= (1 << RX_PIN);
+    // Ensure PCINT enabled for RX
+    if (rxPCMSK && rxPCIEBit) {
+        uint8_t sreg = SREG; cli();
+        PCICR |= rxPCIEBit;
+        *rxPCMSK |= rxMask;
+        SREG = sreg;
+    }
+    return true;
 }
 
 // Transmit one byte, bit-banged

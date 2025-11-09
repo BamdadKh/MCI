@@ -10,6 +10,10 @@ public:
 
     UART() = delete;
 
+    // Initialize or reconfigure. Optional baud change after construction.
+    // Returns true on success. Passing 0 keeps existing baud.
+    bool begin(unsigned long baud = 0);
+
     // Transmit
     void sendByte(uint8_t data);
     void sendBytes(const uint8_t *data, unsigned int length);
@@ -90,4 +94,6 @@ public:
     // Internal helpers
     void sampleRx();          // blocking sampling routine (inside ISR)
     inline void storeRx(uint8_t b);
+
+    void recomputeTiming();
 };
