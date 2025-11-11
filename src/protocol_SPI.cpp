@@ -1,6 +1,7 @@
 #include "protocol_SPI.h"
 
 #include <util/delay.h>
+#include <util/delay_basic.h>
 
 SPI::SPI(volatile uint8_t *mosi_pin_reg, volatile uint8_t *mosi_ddr, volatile uint8_t *mosi_port, uint8_t mosi_pin,
 		 volatile uint8_t *miso_pin_reg, volatile uint8_t *miso_ddr, volatile uint8_t *miso_port, uint8_t miso_pin,
@@ -13,8 +14,9 @@ SPI::SPI(volatile uint8_t *mosi_pin_reg, volatile uint8_t *mosi_ddr, volatile ui
 	  SCK_PIN_REG(sck_pin_reg), SCK_DDR(sck_ddr), SCK_PORT(sck_port), SCK_PIN(sck_pin),
 	  SCK_MASK(static_cast<uint8_t>(1U << sck_pin)),
 	  SS_PIN_REG(ss_pin_reg), SS_DDR(ss_ddr), SS_PORT(ss_port), SS_PIN(ss_pin),
-	  SS_MASK(static_cast<uint8_t>(1U << ss_pin))
+			SS_MASK(static_cast<uint8_t>(1U << ss_pin))
 {
+		recomputeDelayLoops();
 }
 
 void SPI::begin(bool autoChipSelectParam) {
@@ -58,6 +60,7 @@ void SPI::setDelaysMicroseconds(double lowPhase, double highPhase) {
 	}
 	delayLowUs = lowPhase;
 	delayHighUs = highPhase;
+	recomputeDelayLoops();
 }
 
 void SPI::setClockHz(uint32_t frequencyHz) {
@@ -74,6 +77,7 @@ void SPI::setClockHz(uint32_t frequencyHz) {
 
 	delayLowUs = halfPeriod;
 	delayHighUs = halfPeriod;
+	recomputeDelayLoops();
 }
 
 void SPI::setChipSelectPolarity(bool activeLow) {
@@ -190,23 +194,17 @@ uint8_t SPI::transferByteCore(uint8_t data) {
 			bool outBit = ((data >> shift) & 0x01) != 0;
 
 			driveMosi(outBit);
-			if (delayLowUs > 0.0) {
-				_delay_us(delayLowUs);
-			}
+			waitLowPhase();
 
 			driveClockActive();
-			if (delayHighUs > 0.0) {
-				_delay_us(delayHighUs);
-			}
+			waitHighPhase();
 
 			if (sampleMiso()) {
 				received |= static_cast<uint8_t>(1U << shift);
 			}
 
 			driveClockIdle();
-			if (delayLowUs > 0.0) {
-				_delay_us(delayLowUs);
-			}
+			waitLowPhase();
 		}
 	} else {
 		driveClockIdle();
@@ -216,14 +214,10 @@ uint8_t SPI::transferByteCore(uint8_t data) {
 			bool outBit = ((data >> shift) & 0x01) != 0;
 
 			driveClockActive();
-			if (delayHighUs > 0.0) {
-				_delay_us(delayHighUs);
-			}
+			waitHighPhase();
 
 			driveMosi(outBit);
-			if (delayLowUs > 0.0) {
-				_delay_us(delayLowUs);
-			}
+			waitLowPhase();
 
 			driveClockIdle();
 
@@ -231,11 +225,51 @@ uint8_t SPI::transferByteCore(uint8_t data) {
 				received |= static_cast<uint8_t>(1U << shift);
 			}
 
-			if (delayHighUs > 0.0) {
-				_delay_us(delayHighUs);
-			}
+			waitHighPhase();
 		}
 	}
 
 	return received;
+}
+
+void SPI::recomputeDelayLoops() {
+	const double factor = static_cast<double>(F_CPU) / 4000000.0; // 4 cycles per loop
+
+	if (delayLowUs <= 0.0) {
+		delayLowLoops = 0;
+	} else {
+		double loops = delayLowUs * factor;
+		if (loops < 1.0) {
+			loops = 1.0;
+		}
+		if (loops > 65535.0) {
+			loops = 65535.0;
+		}
+		delayLowLoops = static_cast<uint16_t>(loops);
+	}
+
+	if (delayHighUs <= 0.0) {
+		delayHighLoops = 0;
+	} else {
+		double loops = delayHighUs * factor;
+		if (loops < 1.0) {
+			loops = 1.0;
+		}
+		if (loops > 65535.0) {
+			loops = 65535.0;
+		}
+		delayHighLoops = static_cast<uint16_t>(loops);
+	}
+}
+
+inline void SPI::waitLowPhase() const {
+	if (delayLowLoops) {
+		_delay_loop_2(delayLowLoops);
+	}
+}
+
+inline void SPI::waitHighPhase() const {
+	if (delayHighLoops) {
+		_delay_loop_2(delayHighLoops);
+	}
 }

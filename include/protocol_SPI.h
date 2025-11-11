@@ -77,6 +77,8 @@ private:
 
     double delayLowUs = 1.0;
     double delayHighUs = 1.0;
+    uint16_t delayLowLoops = 0;
+    uint16_t delayHighLoops = 0;
 
     bool chipSelectActiveLow = true;
     bool autoChipSelect = true;
@@ -86,6 +88,9 @@ private:
     void driveClockIdle();
     void driveClockActive();
     void driveChipSelect(bool active);
+    void recomputeDelayLoops();
+    inline void waitLowPhase() const;
+    inline void waitHighPhase() const;
     uint8_t transferByteCore(uint8_t data);
 };
 
