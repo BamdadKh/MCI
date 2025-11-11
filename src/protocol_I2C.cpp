@@ -18,11 +18,13 @@ I2C::I2C(volatile uint8_t *sda_pin_reg, volatile uint8_t *sda_ddr, volatile uint
 
 // ---------- Public API ----------
 void I2C::setDelay(int microseconds) {
-    I2C_DELAY_US = microseconds;
+    I2C_DELAY_US = microseconds > 0 ? microseconds : 1;
 }
 
 bool I2C::writeMessage(uint8_t address, const uint8_t *data, unsigned int length) {
-    startCondition();
+    if (!startCondition()) {
+        return false;
+    }
 
     if (!writeByte(address << 1)) { // Write mode
         stopCondition();
@@ -39,7 +41,9 @@ bool I2C::writeMessage(uint8_t address, const uint8_t *data, unsigned int length
 }
 
 bool I2C::readMessage(uint8_t address, uint8_t *data, unsigned int length) {
-    startCondition();
+    if (!startCondition()) {
+        return false;
+    }
 
     if (!writeByte((address << 1) | 0x01)) { // Read mode
         stopCondition();
@@ -94,21 +98,32 @@ inline void I2C::delay() {
 
 // ---------- Byte-level protocols ----------
 bool I2C::writeByte(uint8_t data) {
-    for (int i = 0; i < 8; i++)
-    {
-        pull_scl_low(); // Clock low
+    for (int i = 0; i < 8; i++) {
+        pull_scl_low(); // Clock low phase
         delay();
 
-        if (data & 0x80) {
-            release_sda(); // Send 1
+        const bool bit = (data & 0x80) != 0;
+        if (bit) {
+            release_sda(); // Release SDA to send logic 1
         } else {
-            pull_sda_low(); // Send 0
+            pull_sda_low(); // Drive SDA low for logic 0
         }
         delay();
 
-        release_scl(); // Clock high
-        uint32_t timeout = 10000;
-        while (!read_scl() && --timeout) { }
+        release_scl(); // Allow line high; handle clock stretching
+        if (!waitForSclHigh()) {
+            pull_scl_low();
+            return false;
+        }
+        delay();
+
+        if (bit && !read_sda()) {
+            arbitration_lost = true;
+            release_sda();
+            return false;
+        }
+
+        pull_scl_low();
         delay();
 
         data <<= 1;
@@ -119,15 +134,20 @@ bool I2C::writeByte(uint8_t data) {
     release_sda(); // Release SDA for ACK/NACK
     delay();
 
-    release_scl(); // Clock high
-    uint32_t timeout = 10000;
-    while (!read_scl() && --timeout) { }
+    release_scl();
+    if (!waitForSclHigh()) {
+        pull_scl_low();
+        return false;
+    }
     delay();
 
     bool ack = !read_sda(); // ACK is low (0), NACK is high (1)
-    pull_scl_low();
 
-    return ack;
+    pull_scl_low();
+    delay();
+    release_sda();
+
+    return ack && !arbitration_lost;
 }
 
 bool I2C::readByte(uint8_t &data, bool ack) {
@@ -139,9 +159,11 @@ bool I2C::readByte(uint8_t &data, bool ack) {
         release_sda(); // Release SDA for reading
         delay();
 
-        release_scl(); // Clock high
-        uint32_t timeout = 10000;
-        while (!read_scl() && --timeout) { }
+        release_scl();
+        if (!waitForSclHigh()) {
+            pull_scl_low();
+            return false;
+        }
         delay();
 
         if (read_sda()) {
@@ -158,35 +180,70 @@ bool I2C::readByte(uint8_t &data, bool ack) {
     }
     delay();
 
-    release_scl(); // Clock high
-    uint32_t timeout = 10000;
-    while (!read_scl() && --timeout) { }
+    release_scl();
+    if (!waitForSclHigh()) {
+        pull_scl_low();
+        release_sda();
+        return false;
+    }
     delay();
 
     pull_scl_low();
-    release_sda(); // Release SDA
+    release_sda();
 
     return true;
 }
 
 // ---------- Conditions ----------
-void I2C::startCondition() {
+bool I2C::waitForBusIdle(uint32_t timeoutUs) {
     release_sda();
     release_scl();
-    delay();
+
+    while (timeoutUs--) {
+        if (read_scl() && read_sda()) {
+            return true;
+        }
+        _delay_us(1);
+    }
+    return false;
+}
+
+bool I2C::waitForSclHigh(uint32_t timeoutUs) {
+    while (timeoutUs--) {
+        if (read_scl()) {
+            return true;
+        }
+        _delay_us(1);
+    }
+    return false;
+}
+
+bool I2C::startCondition() {
+    arbitration_lost = false;
+
+    if (!waitForBusIdle()) {
+        return false;
+    }
 
     pull_sda_low();
     delay();
     pull_scl_low();
     delay();
+    return true;
 }
 
 void I2C::stopCondition() {
+    if (arbitration_lost) {
+        release_sda();
+        release_scl();
+        return;
+    }
+
     pull_sda_low();
     delay();
+
     release_scl();
-    uint32_t timeout = 10000;
-    while (!read_scl() && --timeout) { }
+    waitForSclHigh();
     delay();
 
     release_sda();

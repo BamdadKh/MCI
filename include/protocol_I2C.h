@@ -13,6 +13,10 @@ public:
     // Delay config (microseconds)
     void setDelay(int microseconds);
 
+    // Arbitration helpers
+    bool arbitrationLost() const { return arbitration_lost; }
+    void clearArbitrationFlag() { arbitration_lost = false; }
+
     // High-level I2C operations
     bool writeMessage(uint8_t address, const uint8_t *data, unsigned int length);
     bool readMessage(uint8_t address, uint8_t *data, unsigned int length);
@@ -48,8 +52,16 @@ protected:
     bool writeByte(uint8_t data);
     bool readByte(uint8_t &data, bool ack);
 
-    void startCondition();
+    bool startCondition();
     void stopCondition();
+
+    bool waitForBusIdle(uint32_t timeoutUs = BUS_IDLE_TIMEOUT_US);
+    bool waitForSclHigh(uint32_t timeoutUs = CLOCK_HIGH_TIMEOUT_US);
+
+    bool arbitration_lost = false;
+
+    static constexpr uint32_t CLOCK_HIGH_TIMEOUT_US = 10000;
+    static constexpr uint32_t BUS_IDLE_TIMEOUT_US = 10000;
 };
 
 #endif // I2C_H
