@@ -1,6 +1,9 @@
-#include <Arduino.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+#include <stdint.h>
 #include <device_NRF24.h>
-#include <device_SerialMonitor.h>
+#include <protocol_UART.h>
 
 static constexpr bool ROLE_TRANSMITTER = true; // Set false on the receiver board
 static constexpr bool REQUEST_ACK = false;     // Enable when both radios are active
@@ -9,7 +12,7 @@ static constexpr uint8_t PAYLOAD_SIZE = 16;
 
 static const uint8_t PIPE0_ADDRESS[5] = {'N', 'R', 'F', '2', '4'};
 
-static SerialMonitor Debug;
+static UART debugUart(&PIND, &DDRD, &PORTD, PD1, &PIND, &DDRD, &PORTD, PD0, 115200UL);
 
 static NRF24 radio(
     &PINB, &DDRB, &PORTB, PB3,
@@ -19,15 +22,38 @@ static NRF24 radio(
     &PIND, &DDRD, &PORTD, PD7
 );
 
-void setup() {
-    pinMode(LED_BUILTIN, OUTPUT);
-    digitalWrite(LED_BUILTIN, LOW);
+static inline void led_init(void) {
+    DDRB |= (1 << PB5);
+    PORTB &= ~(1 << PB5);
+}
 
-    Debug.begin(115200);
-    Debug.println("nRF24 smoke test starting...");
+static inline void led_set(bool on) {
+    if (on) {
+        PORTB |= (1 << PB5);
+    } else {
+        PORTB &= ~(1 << PB5);
+    }
+}
+
+static inline void led_toggle(void) {
+    PORTB ^= (1 << PB5);
+}
+
+static void debug_send_hex(uint8_t value) {
+    const char digits[] = "0123456789ABCDEF";
+    debugUart.sendByte(digits[(value >> 4) & 0x0F]);
+    debugUart.sendByte(digits[value & 0x0F]);
+}
+
+int main(void) {
+    sei();
+    led_init();
+    led_set(false);
+    debugUart.begin();
+    debugUart.sendString("nRF24 smoke test starting...\r\n");
 
     if (!radio.begin(true, RADIO_CHANNEL, PAYLOAD_SIZE)) {
-        Debug.println("radio.begin failed");
+        debugUart.sendString("radio.begin failed\r\n");
     }
 
     radio.setAutoAck(REQUEST_ACK);
@@ -36,54 +62,55 @@ void setup() {
 
     if (ROLE_TRANSMITTER) {
         radio.stopListening();
-        Debug.println("Configured as transmitter");
+        debugUart.sendString("Configured as transmitter\r\n");
     } else {
         radio.startListening();
-        Debug.println("Configured as receiver");
+        debugUart.sendString("Configured as receiver\r\n");
     }
 
-    digitalWrite(LED_BUILTIN, HIGH);
-}
+    led_set(true);
 
-void loop() {
-    static uint32_t lastAction = 0;
-
-    if (ROLE_TRANSMITTER) {
-        uint32_t now = millis();
-        if (now - lastAction >= 1000) {
-            lastAction = now;
-
+    uint32_t txCounter = 0;
+    while (1) {
+        if (ROLE_TRANSMITTER) {
             uint8_t payload[PAYLOAD_SIZE] = {0};
             payload[0] = 0x42;
-            payload[1] = static_cast<uint8_t>((now >> 24) & 0xFF);
-            payload[2] = static_cast<uint8_t>((now >> 16) & 0xFF);
-            payload[3] = static_cast<uint8_t>((now >> 8) & 0xFF);
-            payload[4] = static_cast<uint8_t>(now & 0xFF);
+            payload[1] = static_cast<uint8_t>((txCounter >> 24) & 0xFF);
+            payload[2] = static_cast<uint8_t>((txCounter >> 16) & 0xFF);
+            payload[3] = static_cast<uint8_t>((txCounter >> 8) & 0xFF);
+            payload[4] = static_cast<uint8_t>(txCounter & 0xFF);
 
             bool ok = radio.write(payload, PAYLOAD_SIZE, REQUEST_ACK);
-            Debug.print("TX ");
-            Debug.print(ok ? "OK" : "FAIL");
-            Debug.print(" status=0x");
-            Debug.println(radio.getStatus(), HEX);
+            debugUart.sendString("TX ");
+            debugUart.sendString(ok ? "OK" : "FAIL");
+            debugUart.sendString(" status=0x");
+            debug_send_hex(radio.getStatus());
+            debugUart.sendString("\r\n");
             if (!ok && REQUEST_ACK) {
-                Debug.println("Hint: enable the peer radio or set REQUEST_ACK=false.");
+                debugUart.sendString("Hint: enable the peer radio or set REQUEST_ACK=false.\r\n");
             }
-        }
-    } else {
-        if (radio.available()) {
-            uint8_t buffer[PAYLOAD_SIZE] = {0};
-            if (radio.read(buffer, PAYLOAD_SIZE)) {
-                Debug.print("RX payload: ");
-                for (uint8_t i = 0; i < PAYLOAD_SIZE; ++i) {
-                    if (buffer[i] < 0x10) {
-                        Debug.print('0');
+
+            txCounter++;
+            _delay_ms(1000);
+        } else {
+            if (radio.available()) {
+                uint8_t buffer[PAYLOAD_SIZE] = {0};
+                if (radio.read(buffer, PAYLOAD_SIZE)) {
+                    debugUart.sendString("RX payload: ");
+                    for (uint8_t i = 0; i < PAYLOAD_SIZE; ++i) {
+                        if (buffer[i] < 0x10) {
+                            debugUart.sendByte('0');
+                        }
+                        debug_send_hex(buffer[i]);
+                        debugUart.sendByte(' ');
                     }
-                    Debug.print(buffer[i], HEX);
-                    Debug.print(' ');
+                    debugUart.sendString("\r\n");
+                    led_toggle();
                 }
-                Debug.println();
-                digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
             }
+            _delay_ms(50);
         }
     }
+
+    return 0;
 }

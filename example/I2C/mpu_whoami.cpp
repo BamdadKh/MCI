@@ -1,37 +1,45 @@
-#include <Arduino.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
 #include <protocol_I2C.h>
-#include <device_SerialMonitor.h>
+#include <protocol_UART.h>
 
 // SDA=A4 (PC4), SCL=A5 (PC5) on Arduino Nano
-I2C i2c(&PINC, &DDRC, &PORTC, PC4, &PINC, &DDRC, &PORTC, PC5);
-SerialMonitor Debug;
+static I2C i2c(&PINC, &DDRC, &PORTC, PC4, &PINC, &DDRC, &PORTC, PC5);
+static UART debugUart(&PIND, &DDRD, &PORTD, PD1, &PIND, &DDRD, &PORTD, PD0, 9600UL);
 
-void setup() {
-    Debug.begin(9600);
-    Debug.println("MPU6050 WHO_AM_I test");
-
-    // Wake device: write 0x00 to PWR_MGMT_1 (0x6B)
-    uint8_t cfg[2] = {0x6B, 0x00};
-    if (!i2c.writeMessage(0x68, cfg, 2)) {
-        Debug.println("Wake write failed");
-    }
-
-    // Set register pointer to WHO_AM_I (0x75)
-    uint8_t reg = 0x75;
-    if (!i2c.writeMessage(0x68, &reg, 1)) {
-        Debug.println("WHO_AM_I pointer write failed");
-    }
-
-    // Read one byte
-    uint8_t whoami = 0xFF;
-    if (!i2c.readMessage(0x68, &whoami, 1)) {
-        Debug.println("Read failed");
-    } else {
-        Debug.print("WHO_AM_I: 0x");
-        Debug.println((int)whoami, 16);
-    }
+static void debugSendHex(uint8_t byte) {
+    const char hexDigits[] = "0123456789ABCDEF";
+    debugUart.sendByte(hexDigits[(byte >> 4) & 0x0F]);
+    debugUart.sendByte(hexDigits[byte & 0x0F]);
 }
 
-void loop() {
-    // No repeating logic; could poll sensor here.
+int main(void) {
+    sei();
+    debugUart.begin();
+    debugUart.sendString("MPU6050 WHO_AM_I test\r\n");
+
+    const uint8_t cfg[2] = {0x6B, 0x00};
+    if (!i2c.writeMessage(0x68, cfg, 2)) {
+        debugUart.sendString("Wake write failed\r\n");
+    }
+
+    uint8_t reg = 0x75;
+    if (!i2c.writeMessage(0x68, &reg, 1)) {
+        debugUart.sendString("WHO_AM_I pointer write failed\r\n");
+    }
+
+    uint8_t whoami = 0xFF;
+    if (!i2c.readMessage(0x68, &whoami, 1)) {
+        debugUart.sendString("Read failed\r\n");
+    } else {
+        debugUart.sendString("WHO_AM_I: 0x");
+        debugSendHex(whoami);
+        debugUart.sendString("\r\n");
+    }
+
+    while (1) {
+        // Placeholder for periodic polling if desired.
+    }
+
+    return 0;
 }
